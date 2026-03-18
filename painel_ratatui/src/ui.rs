@@ -7,12 +7,20 @@ use crate::app::{App, BlocoUI, EstadoApp, ModoVisao};
 fn area_centralizada(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage((100 - percent_y) / 2), Constraint::Percentage(percent_y), Constraint::Percentage((100 - percent_y) / 2)])
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
         .split(r);
 
     Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage((100 - percent_x) / 2), Constraint::Percentage(percent_x), Constraint::Percentage((100 - percent_x) / 2)])
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
         .split(popup_layout[1])[1]
 }
 
@@ -54,29 +62,36 @@ fn calcular_celula<'a>(bloco: &'a BlocoUI, modo: ModoVisao) -> Text<'a> {
 
 fn desenhar_splash(f: &mut Frame, area: Rect) {
     let chunks = Layout::default().direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(30), Constraint::Percentage(40), Constraint::Percentage(30)])
+        .constraints([
+            Constraint::Percentage(30), 
+            Constraint::Percentage(40), 
+            Constraint::Percentage(30)
+        ])
         .split(area);
         
-    // Verifica a largura da tela. Se for menor que 80 colunas, usa um texto simples.
-    let conteudo = if area.width < 80 {
-        "AGENDA SYNC\n\n> Pressione qualquer tecla para iniciar <"
-    } else {
-        crate::app::LOGO_ASCII
-    };
-
-    let splash = Paragraph::new(conteudo)
+    let splash = Paragraph::new(crate::app::LOGO_ASCII)
         .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
         .alignment(Alignment::Center).block(Block::default().borders(Borders::NONE));
         
     f.render_widget(splash, chunks[1]);
 }
 
-pub fn desenhar_interface(frame: &mut Frame, app: &App) {
+// Repare que agora recebemos &mut App para poder passar o state da tabela
+pub fn desenhar_interface(frame: &mut Frame, app: &mut App) {
     let area = frame.size();
-    if let EstadoApp::Splash = app.estado { desenhar_splash(frame, area); return; }
+    
+    if let EstadoApp::Splash = app.estado { 
+        desenhar_splash(frame, area); 
+        return; 
+    }
 
     let layout = Layout::default().direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Length(3), Constraint::Min(0), Constraint::Length(2)])
+        .constraints([
+            Constraint::Length(3), 
+            Constraint::Length(3), 
+            Constraint::Min(0), 
+            Constraint::Length(2)
+        ])
         .split(area);
 
     let texto_cabecalho = format!(" 📅 Hoje é {} - ⏰ {}", app.traduzir_dia(), app.hora_atual);
@@ -132,7 +147,6 @@ pub fn desenhar_interface(frame: &mut Frame, app: &App) {
             celulas.push(celula);
         }
         
-        // Ajuste dinâmico da altura da linha para caber múltiplas informações na Interseção
         let altura_linha = if app.modo_atual == ModoVisao::Intersecao { 4 } else { 2 };
         linhas_tabela.push(Row::new(celulas).height(altura_linha));
     }
@@ -151,8 +165,13 @@ pub fn desenhar_interface(frame: &mut Frame, app: &App) {
         Cell::from(Line::from("Sexta").alignment(Alignment::Center)),
     ]).style(Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan)).bottom_margin(1);
 
-    let tabela = Table::new(linhas_tabela, larguras).block(Block::default().borders(Borders::ALL).title(" Grade Horária ")).header(header_row);
-    frame.render_widget(tabela, layout[2]);
+    // Criação da Tabela
+    let tabela = Table::new(linhas_tabela, larguras)
+        .block(Block::default().borders(Borders::ALL).title(" Grade Horária "))
+        .header(header_row);
+
+    // O TRUQUE DO SCROLL: Renderizamos passando o estado da tabela
+    frame.render_stateful_widget(tabela, layout[2], &mut app.table_state);
 
     let texto_rodape = match app.estado {
         EstadoApp::Navegando => if app.modo_atual == ModoVisao::Intersecao { " [1/2] Alternar Grade | [Q] Sair (Modo Leitura)" } 
