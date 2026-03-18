@@ -3,14 +3,11 @@ mod ui;
 
 use std::{io, time::Duration};
 use crossterm::{
-    event::{self, Event, KeyCode},
-    execute,
+    event::{self, Event, KeyCode}, execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-// Repare que importamos o Stdout aqui
 use ratatui::{backend::CrosstermBackend, Terminal};
-
-use app::{App, Bloco, EstadoApp, Horario, ModoVisao};
+use app::{App, Atividade, EstadoApp, Horario, ModoVisao};
 use ui::desenhar_interface;
 
 fn main() -> Result<(), io::Error> {
@@ -20,40 +17,22 @@ fn main() -> Result<(), io::Error> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Lendo argumentos do terminal para o recurso de CLI (--reset)
     let args: Vec<String> = std::env::args().collect();
-    
-    // Instanciando corretamente usando as novas funções
-    let mut app = if args.contains(&String::from("--reset")) {
-        App::novo_em_branco()
-    } else {
-        App::carregar()
-    };
+    let mut app = if args.contains(&String::from("--reset")) { App::novo_em_branco() } else { App::carregar() };
 
     let res = run_app(&mut terminal, &mut app);
 
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen
-    )?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
-    if let Err(err) = res {
-        println!("{:?}", err)
-    }
-
+    if let Err(err) = res { println!("{:?}", err) }
     Ok(())
 }
 
-// Assinatura simplificada: dizemos exatamente que é o Crossterm com Stdout
-fn run_app(
-    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-    app: &mut App,
-) -> io::Result<()> {
+fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, app: &mut App) -> io::Result<()> {
     loop {
         app.atualizar_relogio();
-
         terminal.draw(|f| desenhar_interface(f, app))?;
 
         if event::poll(Duration::from_millis(16))? {
@@ -61,50 +40,61 @@ fn run_app(
                 let estado_clone = app.estado.clone();
                 
                 match estado_clone {
+                    EstadoApp::Splash => { app.estado = EstadoApp::Navegando; }
+
                     EstadoApp::Navegando => {
                         match key.code {
-                            // CORREÇÃO DO BLOCO MATCH AQUI: uso de { }
-                            KeyCode::Char('q') => {
-                                app.salvar();
-                                return Ok(());
-                            }
-                            KeyCode::Char('1') => app.modo_atual = ModoVisao::Aulas,
-                            KeyCode::Char('2') => app.modo_atual = ModoVisao::Monitoria,
-                            KeyCode::Char('3') => app.modo_atual = ModoVisao::Intersecao,
+                            KeyCode::Char('q') => { app.salvar(); return Ok(()); }
+                            
+                            // Ao mudar de aba, zera os cursores
+                            KeyCode::Char('1') => { app.modo_atual = ModoVisao::Aulas; app.linha_selecionada = 0; app.coluna_selecionada = 0; }
+                            KeyCode::Char('2') => { app.modo_atual = ModoVisao::Monitoria; app.linha_selecionada = 0; app.coluna_selecionada = 0; }
+                            KeyCode::Char('3') => { app.modo_atual = ModoVisao::Intersecao; app.linha_selecionada = 0; app.coluna_selecionada = 0; }
                             
                             KeyCode::Up => app.linha_selecionada = app.linha_selecionada.saturating_sub(1),
-                            KeyCode::Down => app.linha_selecionada = (app.linha_selecionada + 1).min(app.horarios.len().saturating_sub(1)),
+                            KeyCode::Down => {
+                                let max = app.obter_dados_visao().0.len().saturating_sub(1);
+                                app.linha_selecionada = (app.linha_selecionada + 1).min(max);
+                            }
                             KeyCode::Left => app.coluna_selecionada = app.coluna_selecionada.saturating_sub(1),
                             KeyCode::Right => app.coluna_selecionada = (app.coluna_selecionada + 1).min(4),
                             
                             KeyCode::Char('a') | KeyCode::Char('A') => {
-                                app.estado = EstadoApp::EditandoHorario { novo: true };
-                                app.input_atual = String::new();
-                            }
-                            KeyCode::Char('m') | KeyCode::Char('M') => {
-                                if !app.horarios.is_empty() {
-                                    app.estado = EstadoApp::EditandoHorario { novo: false };
-                                    app.input_atual = app.horarios[app.linha_selecionada].texto.clone();
+                                if app.modo_atual != ModoVisao::Intersecao {
+                                    app.estado = EstadoApp::EditandoHorario { novo: true };
+                                    app.input_atual = String::new();
                                 }
                             }
-                            
+                            KeyCode::Char('m') | KeyCode::Char('M') => {
+                                if app.modo_atual != ModoVisao::Intersecao {
+                                    let grade = if app.modo_atual == ModoVisao::Aulas { &app.grade_aulas } else { &app.grade_monitorias };
+                                    if !grade.horarios.is_empty() {
+                                        let texto = grade.horarios[app.linha_selecionada].texto.clone();
+                                        app.estado = EstadoApp::EditandoHorario { novo: false };
+                                        app.input_atual = texto;
+                                    }
+                                }
+                            }
                             KeyCode::Enter => {
-                                if app.modo_atual != ModoVisao::Intersecao && !app.horarios.is_empty() {
-                                    if !app.horarios[app.linha_selecionada].is_intervalo {
+                                if app.modo_atual != ModoVisao::Intersecao {
+                                    let grade = if app.modo_atual == ModoVisao::Aulas { &app.grade_aulas } else { &app.grade_monitorias };
+                                    if !grade.horarios.is_empty() && !grade.horarios[app.linha_selecionada].is_intervalo {
                                         app.estado = EstadoApp::EditandoBloco;
                                         app.input_atual = String::new();
                                     }
                                 }
                             }
                             KeyCode::Delete => {
-                                if !app.horarios.is_empty() && !app.horarios[app.linha_selecionada].is_intervalo {
-                                    let bloco = &mut app.matriz[app.linha_selecionada][app.coluna_selecionada];
-                                    if app.modo_atual == ModoVisao::Aulas {
-                                        bloco.desc_aula.clear();
-                                        bloco.tem_aula = false;
-                                    } else if app.modo_atual == ModoVisao::Monitoria {
-                                        bloco.desc_monitoria.clear();
-                                        bloco.tem_monitoria = false;
+                                if app.modo_atual != ModoVisao::Intersecao {
+                                    // 1. Extraímos os valores em variáveis locais primeiro
+                                    let l = app.linha_selecionada;
+                                    let c = app.coluna_selecionada;
+                                    
+                                    // 2. Só então pedimos acesso de modificação
+                                    let grade = if app.modo_atual == ModoVisao::Aulas { &mut app.grade_aulas } else { &mut app.grade_monitorias };
+                                    
+                                    if !grade.horarios.is_empty() && !grade.horarios[l].is_intervalo {
+                                        grade.matriz[l][c] = Atividade::default();
                                     }
                                 }
                             }
@@ -115,13 +105,17 @@ fn run_app(
                     EstadoApp::EditandoBloco => {
                         match key.code {
                             KeyCode::Enter => {
-                                let bloco = &mut app.matriz[app.linha_selecionada][app.coluna_selecionada];
-                                if app.modo_atual == ModoVisao::Aulas {
-                                    bloco.desc_aula = app.input_atual.clone();
-                                    bloco.tem_aula = !bloco.desc_aula.is_empty();
-                                } else if app.modo_atual == ModoVisao::Monitoria {
-                                    bloco.desc_monitoria = app.input_atual.clone();
-                                    bloco.tem_monitoria = !bloco.desc_monitoria.is_empty();
+                                if app.modo_atual != ModoVisao::Intersecao {
+                                    let l = app.linha_selecionada;
+                                    let c = app.coluna_selecionada;
+                                    let input = app.input_atual.clone();
+                                    
+                                    let grade = if app.modo_atual == ModoVisao::Aulas { &mut app.grade_aulas } else { &mut app.grade_monitorias };
+                                    
+                                    grade.matriz[l][c] = Atividade {
+                                        ativa: !input.is_empty(),
+                                        descricao: input,
+                                    };
                                 }
                                 app.estado = EstadoApp::Navegando;
                             }
@@ -134,9 +128,7 @@ fn run_app(
 
                     EstadoApp::EditandoHorario { novo } => {
                         match key.code {
-                            KeyCode::Enter => {
-                                app.estado = EstadoApp::PerguntaIntervalo { texto_temp: app.input_atual.clone(), novo };
-                            }
+                            KeyCode::Enter => { app.estado = EstadoApp::PerguntaIntervalo { texto_temp: app.input_atual.clone(), novo }; }
                             KeyCode::Esc => app.estado = EstadoApp::Navegando,
                             KeyCode::Backspace => { app.input_atual.pop(); }
                             KeyCode::Char(c) => app.input_atual.push(c),
@@ -149,14 +141,17 @@ fn run_app(
                             KeyCode::Char('s') | KeyCode::Char('S') | KeyCode::Char('n') | KeyCode::Char('N') => {
                                 let is_intervalo = matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S'));
                                 
-                                if novo {
-                                    app.horarios.push(Horario { texto: texto_temp, is_intervalo });
-                                    app.matriz.push(vec![Bloco::default(); 5]);
-                                } else {
-                                    app.horarios[app.linha_selecionada] = Horario { texto: texto_temp, is_intervalo };
-                                    if is_intervalo {
-                                        for dia_idx in 0..5 {
-                                            app.matriz[app.linha_selecionada][dia_idx] = Bloco::default();
+                                if app.modo_atual != ModoVisao::Intersecao {
+                                    let l = app.linha_selecionada;
+                                    let grade = if app.modo_atual == ModoVisao::Aulas { &mut app.grade_aulas } else { &mut app.grade_monitorias };
+                                    
+                                    if novo {
+                                        grade.horarios.push(Horario { texto: texto_temp, is_intervalo });
+                                        grade.matriz.push(vec![Atividade::default(); 5]);
+                                    } else {
+                                        grade.horarios[l] = Horario { texto: texto_temp, is_intervalo };
+                                        if is_intervalo {
+                                            grade.matriz[l] = vec![Atividade::default(); 5];
                                         }
                                     }
                                 }
